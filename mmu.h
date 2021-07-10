@@ -100,6 +100,7 @@ struct segdesc {
 #define PTE_P           0x001   // Present
 #define PTE_W           0x002   // Writeable
 #define PTE_U           0x004   // User
+#define PTE_A           0x020   // Accessed
 #define PTE_PS          0x080   // Page Size
 //changed: Added PTE_E. You have 12 bits for flags according
 //to page 30 of the textbook

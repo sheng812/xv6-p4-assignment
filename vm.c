@@ -317,6 +317,7 @@ clearpteu(pde_t *pgdir, char *uva)
   if(pte == 0)
     panic("clearpteu");
   *pte &= ~PTE_U;
+  *pte |= PTE_E;
 }
 
 // Given a parent process's page table, create a copy
@@ -419,6 +420,7 @@ char* translate_and_set(pde_t *pgdir, char *uva) {
   //cprintf("pte was %x, pointer %p\n", *pte, pte);
   *pte = *pte | PTE_E;
   *pte = *pte & ~PTE_P;
+  *pte = *pte & ~PTE_A;
   //cprintf("pte is now %x\n", *pte);
 
   return (char*)P2V(PTE_ADDR(*pte));
@@ -441,6 +443,7 @@ int mdecrypt(char *virtual_addr) {
   //cprintf("pte was %x\n", *pte);
   *pte = *pte & ~PTE_E;
   *pte = *pte | PTE_P;
+  *pte = *pte | PTE_A;
   //cprintf("pte is %x\n", *pte);
   //char * original = uva2ka(mypd, virtual_addr) + OFFSET(virtual_addr);
   //cprintf("original in decrypt was %p\n", original);
@@ -459,6 +462,8 @@ int mdecrypt(char *virtual_addr) {
     *slider = *slider ^ 0xFF;
     slider++;
   }
+  // enqueue clockqueue
+  enqueue(p, virtual_addr);
 
   return 0;
 }
@@ -534,26 +539,42 @@ int mencrypt(char *virtual_addr, int len) {
   return 0;
 }
 
-int getpgtable(struct pt_entry* entries, int num) {
+int getpgtable(struct pt_entry* entries, int num, int wsetOnly) {
   //cprintf("getpgtable2: %p, %d\n", entries, num);
   //pte_t *pgtab;
 
+  // if wsetOnly is not 1 or 0 return error
+  if (wsetOnly != 1 && wsetOnly != 0) {
+    return -1;
+  }
+
   struct proc * me = myproc();
+  // cprintf("clockhand: %d\n", me->clockqueue.hand);
+  // for (int i = 0; i < me->clockqueue.size; i++) {
+  //   cprintf("%x %d\n", me->clockqueue.queue[i], *(walkpgdir(me->pgdir, me->clockqueue.queue[i], 0)) & PTE_A);
+  // }
 
   int index = 0;
   pte_t * curr_pte;
   //reverse order
 
-  for (void * i = (void*) PGROUNDDOWN(((int)me->sz)); i >= 0 && index < num; i-=PGSIZE) {
+  for (void * i = (void*) PGROUNDDOWN(((int)me->sz)); (int)i >= 0 && index < num; i-=PGSIZE) {
     //iterate through the page table and read the entries
     //Those entries contain the physical page number + flags
     //curr_pte = pgtab[i];
     curr_pte = walkpgdir(me->pgdir, i, 0);
+    // curr_pte = (pte_t *) (uva2ka(me->pgdir, (char*) i));
+    // cprintf("%d\n", index);
     //TODO: Is this assumption correct?
     //currPage is 0 if page is not allocated?
     //yes: see deallocuvm
+    // cprintf("test%x %x %x\n", curr_pte, *curr_pte, ((*curr_pte) & (PTE_E)));
     if (*curr_pte) {//this page is allocated
       //this is the same for all pt_entries... right?
+      if (wsetOnly == 1 && (((*curr_pte) & (PTE_E)) != 0)) {
+        continue;
+      }
+      // cprintf("%x %x %x\n", curr_pte, i, ((*curr_pte) & (PTE_E)));
       entries[index].pdx = PDX(i); 
       entries[index].ptx = PTX(i);
       //convert to physical addr then shift to get PPN 
@@ -565,25 +586,94 @@ int getpgtable(struct pt_entry* entries, int num) {
       entries[index].encrypted = (*curr_pte & PTE_E) ? 1 : 0;
       entries[index].user = (*curr_pte & PTE_U) ? 1 : 0;
       //TODO: change for part B
-      entries[index].ref = 1;
+      entries[index].ref = (*curr_pte & PTE_A) ? 1 : 0;
 
       index++;
-    }
+    } 
   }
   //index is the number of ptes copied
   return index;
 }
 
 
-int dump_rawphymem(char *physical_addr, char * buffer) {
+int dump_rawphymem(uint physical_addr, char * buffer) {
   //cprintf("dump_rawphymem: %p, %p\n", physical_addr, buffer);
+  *buffer = *buffer;
   int retval = copyout(myproc()->pgdir, (uint) buffer, (void *) PGROUNDDOWN((int)P2V(physical_addr)), PGSIZE);
   if (retval)
     return -1;
   return 0;
 }
 
+// enqueue clockqueue
+int enqueue(struct proc *p, char *va) {
+  
+  // int i;
+  int clockhand = p->clockqueue.hand;
+  // for (i = 0; i < p->clockqueue.size; i++) {
+  //   // pte_t * pte1 = walkpgdir(p->pgdir, p->clockqueue.queue[clockhand], 0);
+  //   // cprintf("clock %x %d ", p->clockqueue.queue[i], (*pte1) & PTE_A);
+  //   if (p->clockqueue.queue[i] == va) {
+  //     return 0;
+  //   }
+  // }
+  if (p->clockqueue.size < CLOCKSIZE) {
+    p->clockqueue.queue[p->clockqueue.size] = va;
+    p->clockqueue.size++;
+    cprintf("enqueue %x size %d\n", p->clockqueue.queue[p->clockqueue.size-1], p->clockqueue.size);
+    return 0;
+  }
+  
+  // find the victim
+  pte_t * pte = walkpgdir(p->pgdir, p->clockqueue.queue[clockhand], 0);
+  while (((*pte) & PTE_A) != 0) {
+    // hot to cold
+    *pte = *pte & (~PTE_A);
+    clockhand = (clockhand + 1) % CLOCKSIZE;
+    pte = walkpgdir(p->pgdir, p->clockqueue.queue[clockhand], 0);
+  }
+  // encrypt the victim
+  cprintf("evicted: %x\n", p->clockqueue.queue[clockhand]);
+  mencrypt(p->clockqueue.queue[clockhand], 1);
 
+  p->clockqueue.queue[clockhand] = va;
+  cprintf("enqueue %x and evicted\n", p->clockqueue.queue[clockhand]);
+  p->clockqueue.hand = (clockhand + 1) % CLOCKSIZE;
+  return 0;
+}
+
+int dequeue(struct proc *p, char *va) {
+  int i;
+  int index = CLOCKSIZE;
+  int flag = 1;
+  if (p->clockqueue.size == 0) {
+    return 0;
+  }
+  for (i = 0; i < p->clockqueue.size; i++) {
+    if (p->clockqueue.queue[i] == va) {
+      index = i;
+      flag = 0;
+      break;
+    }
+  }
+  // pde is not in queue
+  if (flag) {
+    return 0;
+  }
+
+  p->clockqueue.size--;
+  cprintf("dequeue %x %x\n", p->clockqueue.queue[i],va);
+  if (p->clockqueue.size == 0) {
+    p->clockqueue.queue[0] = (char*) KERNBASE;
+    return 0;
+  }
+  for (i = index; i < p->clockqueue.size; i++) {
+    p->clockqueue.queue[i] = p->clockqueue.queue[i+1];
+  }
+  p->clockqueue.queue[p->clockqueue.size] = (char*) KERNBASE;
+  p->clockqueue.hand = p->clockqueue.hand % p->clockqueue.size;
+  return 0;
+}
 //PAGEBREAK!
 // Blank page.
 //PAGEBREAK!

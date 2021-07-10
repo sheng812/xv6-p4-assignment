@@ -19,6 +19,14 @@ exec(char *path, char **argv)
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
 
+  // reset working set
+  for (i = curproc->clockqueue.size - 1; i >= 0; i--) {
+    // cprintf("%d\n", i);
+    // cprintf("%d\n", curproc->clockqueue.queue[i]);
+    dequeue(curproc, curproc->clockqueue.queue[i]);
+    // mencrypt(curproc->clockqueue.queue[i], 1);
+  }
+
   begin_op();
 
   if((ip = namei(path)) == 0){
@@ -65,6 +73,7 @@ exec(char *path, char **argv)
   sz = PGROUNDUP(sz);
   if((sz = allocuvm(pgdir, sz, sz + 2*PGSIZE)) == 0)
     goto bad;
+  mencrypt((char *)(sz - 2*PGSIZE), 1);
   clearpteu(pgdir, (char*)(sz - 2*PGSIZE));
   sp = sz;
 
@@ -101,6 +110,10 @@ exec(char *path, char **argv)
   curproc->tf->esp = sp;
   switchuvm(curproc);
   freevm(oldpgdir);
+  // cprintf("exec %x %x\n",PGROUNDUP(sz), PGROUNDDOWN(sz - PGSIZE));
+  // cprintf("queue %x %x\n",curproc->clockqueue.size, curproc->clockqueue.queue[0]);
+  mencrypt((char *)(sz - PGSIZE), 1);
+  mencrypt((char *)(0), (sz - 2*PGSIZE)/PGSIZE);
   return 0;
 
  bad:

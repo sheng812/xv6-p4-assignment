@@ -34,6 +34,14 @@ struct context {
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+
+// record for recently used pte
+struct clockqueue {
+  char* queue[CLOCKSIZE];
+  int size;
+  int hand;
+};
+
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -49,7 +57,11 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  struct clockqueue clockqueue;
 };
+
+// int enqueue(struct proc *p, char *va);
+// int dequeue(struct proc *p, char *va);
 
 // Process memory is laid out contiguously, low addresses first:
 //   text

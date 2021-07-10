@@ -189,10 +189,12 @@ int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
 //changed: added syscall decl
 int             mencrypt(char *virtual_addr, int len);
-int             getpgtable(struct pt_entry* entries, int num);
-int             dump_rawphymem(char *physical_addr, char * buffer);
+int             getpgtable(struct pt_entry* entries, int num, int wsetOnly);
+int             dump_rawphymem(uint physical_addr, char * buffer);
 //TODO: mention this
 int            mdecrypt(char *virtual_addr);
+int             enqueue(struct proc *p, char *va);
+int             dequeue(struct proc *p, char *va);
 
 
 // number of elements in fixed-size array

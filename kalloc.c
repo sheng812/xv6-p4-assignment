@@ -91,7 +91,7 @@ kalloc(void)
     kmem.freelist = r->next;
   if(kmem.use_lock)
     release(&kmem.lock);
-  cprintf("returning %d %x\n", PPN(V2P(r)), V2P(r));
+  //cprintf("returning %d %x\n", PPN(V2P(r)), V2P(r));
 
   return (char*)r;
 }

@@ -88,6 +88,11 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->clockqueue.hand =0;
+  p->clockqueue.size = 0;
+  for (int i = 0; i < CLOCKSIZE; i++) {
+    p->clockqueue.queue[i] = (char*) KERNBASE;
+  }
 
   release(&ptable.lock);
 
@@ -160,14 +165,20 @@ growproc(int n)
 {
   uint sz;
   struct proc *curproc = myproc();
-
+  
   sz = curproc->sz;
+  // cprintf("before sbrk(), size %d %d %d\n", curproc->clockqueue.size, sz, n);
   if(n > 0){
     if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
+    // cprintf("grow %x %x\n",PGROUNDUP(sz), PGROUNDDOWN(sz - n));
+    mencrypt((char *)(sz - n), (PGROUNDUP(sz) - PGROUNDDOWN(sz - n))/PGSIZE);
   } else if(n < 0){
     if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
+    for (uint i = PGROUNDUP((uint)(sz)); i <= PGROUNDDOWN(sz-n); i += PGSIZE) {
+      dequeue(curproc, (char *)i);
+    }
   }
   curproc->sz = sz;
   switchuvm(curproc);
@@ -198,6 +209,11 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->parent = curproc;
+  np->clockqueue.hand = curproc->clockqueue.hand;
+  np->clockqueue.size = curproc->clockqueue.size;
+  for (i = 0; i < np->clockqueue.size; i++) {
+    np->clockqueue.queue[i] = curproc->clockqueue.queue[i];
+  }
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
